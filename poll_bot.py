@@ -1,4 +1,5 @@
 import math
+import asyncio
 import traceback
 import discord
 from discord import app_commands
@@ -65,6 +66,40 @@ async def defer_ephemeral(interaction):
 
 def is_Admin(interaction):
     return interaction.user.id != 319532244463255552
+
+@bot.tree.command(name="hjerneskade_time", description="Set the daily posting time for dagens hjerneskade (Copenhagen time)")
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(start="Posting time or interval start, HH:mm (24-hour Copenhagen time)",
+                       end="Optional interval end, HH:mm; a random minute is chosen each day")
+async def hjerneskade_time(interaction: discord.Interaction, start: str, end: str = None):
+    # Default command permissions can be overridden in Discord; always check at execution.
+    if interaction.guild_id is None or not interaction.permissions.administrator:
+        return await interaction.response.send_message("Only server administrators can change this schedule.", ephemeral=True)
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", start) or (
+        end is not None and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", end)
+    ):
+        return await interaction.response.send_message("Use 24-hour HH:mm times, for example 13:00 and 15:00.", ephemeral=True)
+    if end is not None and end < start:
+        return await interaction.response.send_message("End must be at or after start on the same day.", ephemeral=True)
+
+    await defer_ephemeral(interaction)
+    try:
+        response = await asyncio.to_thread(
+            requests.put, API_HOST + "memeoftheday/schedule",
+            headers={"Bot_Secret": BOT_SECRET},
+            json={"start": start, "end": end}, timeout=15,
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        logger.warning("Could not confirm the hjerneskade schedule update")
+        return await interaction.followup.send("Could not confirm the schedule update. Please try again.", ephemeral=True)
+    schedule = start if end is None or end == start else f"a random minute between {start} and {end}"
+    await interaction.followup.send(
+        f"Dagens hjerneskade will post daily at {schedule}, Copenhagen time (including daylight saving). "
+        "If today's post has already been sent or the time has passed, the change applies tomorrow.",
+        ephemeral=True,
+    )
 
 def should_react_to_message(message):
     return message.author.name == TARGET_USER and message.attachments[0].filename.startswith("memeId")
@@ -1085,4 +1120,5 @@ def extract_owners(meme):
 
     return owners
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+    bot.run(TOKEN)
