@@ -67,15 +67,18 @@ async def defer_ephemeral(interaction):
 def is_Admin(interaction):
     return interaction.user.id != 319532244463255552
 
-@bot.tree.command(name="hjerneskade_time", description="Set the daily posting time for dagens hjerneskade (Copenhagen time)")
+@bot.tree.command(name="hjerneskade_time", description="Set the daily posting time for dagens hjerneskade")
 @app_commands.guild_only()
 @app_commands.default_permissions(administrator=True)
-@app_commands.describe(start="Posting time or interval start, HH:mm (24-hour Copenhagen time)",
-                       end="Optional interval end, HH:mm; a random minute is chosen each day")
-async def hjerneskade_time(interaction: discord.Interaction, start: str, end: str = None):
+@app_commands.describe(start="Posting time or interval start, HH:mm (24-hour time in the saved timezone)",
+                       end="Optional interval end, HH:mm; a random minute is chosen each day",
+                       timezone="Server owner only: timezone such as Europe/Copenhagen or America/New_York")
+async def hjerneskade_time(interaction: discord.Interaction, start: str, end: str = None, timezone: str = None):
     # Default command permissions can be overridden in Discord; always check at execution.
     if interaction.guild_id is None or not interaction.permissions.administrator:
         return await interaction.response.send_message("Only server administrators can change this schedule.", ephemeral=True)
+    if timezone is not None and interaction.user.id != interaction.guild.owner_id:
+        return await interaction.response.send_message("Only the server owner can change the timezone.", ephemeral=True)
     if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", start) or (
         end is not None and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", end)
     ):
@@ -88,15 +91,21 @@ async def hjerneskade_time(interaction: discord.Interaction, start: str, end: st
         response = await asyncio.to_thread(
             requests.put, API_HOST + "memeoftheday/schedule",
             headers={"Bot_Secret": BOT_SECRET},
-            json={"start": start, "end": end}, timeout=15,
+            json={"start": start, "end": end, "timeZone": timezone}, timeout=15,
         )
+        if response.status_code == 400:
+            return await interaction.followup.send(
+                "Invalid schedule or timezone. Use a timezone such as Europe/Copenhagen or America/New_York.",
+                ephemeral=True,
+            )
         response.raise_for_status()
     except requests.RequestException:
         logger.warning("Could not confirm the hjerneskade schedule update")
         return await interaction.followup.send("Could not confirm the schedule update. Please try again.", ephemeral=True)
     schedule = start if end is None or end == start else f"a random minute between {start} and {end}"
+    saved_timezone = response.json()["timeZone"]
     await interaction.followup.send(
-        f"Dagens hjerneskade will post daily at {schedule}, Copenhagen time (including daylight saving). "
+        f"Dagens hjerneskade will post daily at {schedule}, {saved_timezone} time (including daylight saving). "
         "If today's post has already been sent or the time has passed, the change applies tomorrow.",
         ephemeral=True,
     )
